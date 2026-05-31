@@ -1,0 +1,13 @@
+.env
+.chroma/
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+
+# Local planning, private notes, generated knowledge, and indexes.
+docs/
+notes/
+raw_inputs/
+idea.md
+产品阶段规划.md

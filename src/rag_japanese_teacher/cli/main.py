@@ -2,7 +2,6 @@ import argparse
 import sys
 
 from rich.console import Console
-from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
@@ -15,7 +14,7 @@ from rag_japanese_teacher.knowledge_build.service import (
     split_raw_input_file,
     summarize_raw_inputs,
 )
-from rag_japanese_teacher.rag.service import answer_question, ingest_notes
+from rag_japanese_teacher.rag.service import ingest_notes, stream_answer_question
 
 
 console = Console()
@@ -52,10 +51,7 @@ def run_ask(question: str | None, mode: str) -> int:
     settings = load_settings()
 
     if question:
-        answer, sources = answer_question(settings, question, mode)
-        console.print(Panel(Markdown(answer), title="AI 日语转职面试老师"))
-        if sources:
-            console.print(Panel(sources, title="参考笔记"))
+        _print_streaming_answer(settings, question, mode)
         return 0
 
     console.print("[bold]进入交互模式。输入 exit / quit 结束。[/bold]")
@@ -71,10 +67,19 @@ def run_ask(question: str | None, mode: str) -> int:
         if not user_input:
             continue
 
-        answer, sources = answer_question(settings, user_input, mode)
-        console.print(Panel(Markdown(answer), title="AI 日语转职面试老师"))
-        if sources:
-            console.print(Panel(sources, title="参考笔记"))
+        _print_streaming_answer(settings, user_input, mode)
+
+
+def _print_streaming_answer(settings, question: str, mode: str) -> None:
+    """Print an answer as the local model generates it."""
+
+    stream, sources = stream_answer_question(settings, question, mode)
+    console.print("\n[bold]AI 日语转职面试老师[/bold]\n")
+    for chunk in stream:
+        console.print(chunk, end="", markup=False, highlight=False)
+    console.print()
+    if sources:
+        console.print(Panel(sources, title="参考笔记"))
 
 
 def run_knowledge_build_scan() -> int:

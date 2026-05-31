@@ -2,6 +2,7 @@ from langchain_chroma import Chroma
 from langchain_core.documents import Document
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
+from collections.abc import Iterator
 from typing import Callable
 
 from rag_japanese_teacher.core.config import Settings
@@ -99,6 +100,52 @@ def answer_question(settings: Settings, question: str, mode: str = "general") ->
     context = format_documents(documents)
     sources = format_sources(documents)
 
+    chain = _build_answer_chain(settings)
+
+    answer = chain.invoke(
+        {
+            "mode_prompt": get_mode_prompt(mode),
+            "context": context,
+            "question": question,
+        }
+    )
+
+    return answer, sources
+
+
+def stream_answer_question(
+    settings: Settings,
+    question: str,
+    mode: str = "general",
+) -> tuple[Iterator[str], str]:
+    """Stream a RAG answer token by token.
+
+    The retrieval step still happens before streaming starts. After that, the
+    LLM output is yielded as it is generated, which makes long interview answers
+    feel much more responsive in the CLI.
+    """
+
+    vectorstore = build_vectorstore(settings)
+    documents = _retrieve_documents(vectorstore, question, mode)
+
+    context = format_documents(documents)
+    sources = format_sources(documents)
+    chain = _build_answer_chain(settings)
+
+    stream = chain.stream(
+        {
+            "mode_prompt": get_mode_prompt(mode),
+            "context": context,
+            "question": question,
+        }
+    )
+
+    return stream, sources
+
+
+def _build_answer_chain(settings: Settings):
+    """Create the shared prompt -> LLM -> text parser chain."""
+
     prompt = ChatPromptTemplate.from_messages(
         [
             ("system", BASE_SYSTEM_PROMPT),
@@ -112,17 +159,7 @@ def answer_question(settings: Settings, question: str, mode: str = "general") ->
     )
 
     llm = build_chat_model(settings)
-    chain = prompt | llm | StrOutputParser()
-
-    answer = chain.invoke(
-        {
-            "mode_prompt": get_mode_prompt(mode),
-            "context": context,
-            "question": question,
-        }
-    )
-
-    return answer, sources
+    return prompt | llm | StrOutputParser()
 
 
 def _retrieve_documents(vectorstore: Chroma, question: str, mode: str) -> list[Document]:
@@ -133,7 +170,7 @@ def _retrieve_documents(vectorstore: Chroma, question: str, mode: str) -> list[D
     then language-expression notes that can polish the answer.
     """
 
-    raw_documents = vectorstore.similarity_search(question, k=12)
+    raw_documents = vectorstore.similarity_search(question, k=8)
     priority = RETRIEVAL_CATEGORY_PRIORITY.get(
         mode, RETRIEVAL_CATEGORY_PRIORITY["general"]
     )
@@ -149,7 +186,7 @@ def _retrieve_documents(vectorstore: Chroma, question: str, mode: str) -> list[D
         for _, document in sorted(enumerate(raw_documents), key=sort_key)
     ]
 
-    return _dedupe_documents(ranked_documents)[:6]
+    return _dedupe_documents(ranked_documents)[:4]
 
 
 def _dedupe_documents(documents: list[Document]) -> list[Document]:

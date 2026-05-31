@@ -174,6 +174,18 @@ notes/
 jp-teacher ingest
 ```
 
+`ingest` 会显示当前进度：
+
+```text
+Loading Markdown notes from notes
+Loaded 114 Markdown note(s)
+Creating embedding model
+Embedding notes and writing Chroma index to .chroma
+Indexed 114 Markdown note(s)
+```
+
+如果停在 `Embedding notes...`，通常是在调用本地 Ollama embedding 模型生成向量。笔记越多，等待越久。
+
 或者：
 
 ```bash

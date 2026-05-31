@@ -25,7 +25,22 @@ def run_ingest() -> int:
     """CLI handler for `jp-teacher ingest`."""
 
     settings = load_settings()
-    count = ingest_notes(settings)
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+        transient=False,
+    ) as progress:
+        task = progress.add_task("Preparing ingest...", total=None)
+
+        def report(message: str) -> None:
+            """Bridge RAG ingest progress messages into Rich progress UI."""
+
+            progress.update(task, description=message)
+
+        count = ingest_notes(settings, progress=report)
+
     console.print(f"[green]Indexed {count} Markdown notes.[/green]")
     console.print(f"Vector database: [bold]{settings.chroma_dir}[/bold]")
     return 0

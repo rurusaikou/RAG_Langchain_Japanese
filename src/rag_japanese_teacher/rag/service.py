@@ -1,6 +1,7 @@
 from langchain_chroma import Chroma
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
+from typing import Callable
 
 from rag_japanese_teacher.core.config import Settings
 from rag_japanese_teacher.core.models import build_chat_model, build_embeddings
@@ -25,22 +26,37 @@ def build_vectorstore(settings: Settings) -> Chroma:
     )
 
 
-def ingest_notes(settings: Settings) -> int:
+def ingest_notes(settings: Settings, progress: Callable[[str], None] | None = None) -> int:
     """Embed all finalized notes and store them in Chroma."""
 
+    _emit_progress(progress, f"Loading Markdown notes from {settings.notes_dir}")
     documents = load_markdown_documents(settings.notes_dir)
+    _emit_progress(progress, f"Loaded {len(documents)} Markdown note(s)")
+    _emit_progress(progress, "Creating embedding model")
+    embeddings = build_embeddings(settings)
+    _emit_progress(progress, f"Embedding notes and writing Chroma index to {settings.chroma_dir}")
+
     vectorstore = Chroma.from_documents(
         documents=documents,
-        embedding=build_embeddings(settings),
+        embedding=embeddings,
         collection_name=COLLECTION_NAME,
         persist_directory=str(settings.chroma_dir),
     )
 
     persist = getattr(vectorstore, "persist", None)
     if callable(persist):
+        _emit_progress(progress, "Persisting Chroma index")
         persist()
 
+    _emit_progress(progress, f"Indexed {len(documents)} Markdown note(s)")
     return len(documents)
+
+
+def _emit_progress(progress: Callable[[str], None] | None, message: str) -> None:
+    """Report progress only when the caller provides a callback."""
+
+    if progress:
+        progress(message)
 
 
 def answer_question(settings: Settings, question: str, mode: str = "general") -> tuple[str, str]:

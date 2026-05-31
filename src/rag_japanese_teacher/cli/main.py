@@ -8,9 +8,9 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 
 from rag_japanese_teacher.core.config import load_settings
-from rag_japanese_teacher.phase0.service import (
+from rag_japanese_teacher.knowledge_build.service import (
     INPUT_GROUPS,
-    build_phase0_drafts,
+    build_knowledge_drafts,
     scan_raw_inputs,
     split_raw_input_file,
     summarize_raw_inputs,
@@ -53,7 +53,7 @@ def run_ask(question: str | None, mode: str) -> int:
 
     if question:
         answer, sources = answer_question(settings, question, mode)
-        console.print(Panel(Markdown(answer), title="AI 日语老师"))
+        console.print(Panel(Markdown(answer), title="AI 日语转职面试老师"))
         if sources:
             console.print(Panel(sources, title="参考笔记"))
         return 0
@@ -72,19 +72,19 @@ def run_ask(question: str | None, mode: str) -> int:
             continue
 
         answer, sources = answer_question(settings, user_input, mode)
-        console.print(Panel(Markdown(answer), title="AI 日语老师"))
+        console.print(Panel(Markdown(answer), title="AI 日语转职面试老师"))
         if sources:
             console.print(Panel(sources, title="参考笔记"))
 
 
-def run_phase0_scan() -> int:
-    """CLI handler for scanning raw Phase 0 inputs."""
+def run_knowledge_build_scan() -> int:
+    """CLI handler for scanning raw knowledge-build inputs."""
 
     settings = load_settings()
     files = scan_raw_inputs(settings)
     summary = summarize_raw_inputs(files)
 
-    table = Table(title="Phase 0 原始输入扫描")
+    table = Table(title="Knowledge Build 原始输入扫描")
     table.add_column("输入类型")
     table.add_column("目录")
     table.add_column("文件数", justify="right")
@@ -97,7 +97,8 @@ def run_phase0_scan() -> int:
     if not files:
         console.print(
             "[yellow]没有发现原始输入文件。请把 .md / .txt 文件放入 "
-            "raw_inputs/class_notes/ 或 raw_inputs/interview_summaries/。[/yellow]"
+            "raw_inputs/class_notes/、raw_inputs/project_experiences/ "
+            "或 raw_inputs/interview_summaries/。[/yellow]"
         )
         return 0
 
@@ -108,8 +109,8 @@ def run_phase0_scan() -> int:
     return 0
 
 
-def run_phase0_build(source: str, dry_run: bool, overwrite: bool) -> int:
-    """CLI handler for converting raw Phase 0 inputs into notes."""
+def run_knowledge_build(source: str, dry_run: bool, overwrite: bool) -> int:
+    """CLI handler for converting raw inputs into structured knowledge notes."""
 
     settings = load_settings()
 
@@ -119,14 +120,14 @@ def run_phase0_build(source: str, dry_run: bool, overwrite: bool) -> int:
         console=console,
         transient=False,
     ) as progress:
-        task = progress.add_task("Preparing Phase 0 build...", total=None)
+        task = progress.add_task("Preparing knowledge build...", total=None)
 
         def report(message: str) -> None:
             """Bridge service-layer progress messages into Rich progress UI."""
 
             progress.update(task, description=message)
 
-        results = build_phase0_drafts(
+        results = build_knowledge_drafts(
             settings=settings,
             source=source,
             dry_run=dry_run,
@@ -136,7 +137,7 @@ def run_phase0_build(source: str, dry_run: bool, overwrite: bool) -> int:
 
     if not results:
         console.print(
-            "[yellow]没有可处理的原始输入文件。先运行 `jp-teacher phase0 scan` 查看。[/yellow]"
+            "[yellow]没有可处理的原始输入文件。先运行 `jp-teacher knowledge_build scan` 查看。[/yellow]"
         )
         return 0
 
@@ -161,30 +162,34 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("ingest", help="Build or refresh the local vector index.")
 
-    phase0_parser = subparsers.add_parser(
-        "phase0",
-        help="Prepare raw class notes and interview summaries for RAG.",
+    knowledge_build_parser = subparsers.add_parser(
+        "knowledge_build",
+        aliases=["knowledge-build"],
+        help="Build structured notes from class notes, project experiences, and interview summaries.",
     )
-    phase0_subparsers = phase0_parser.add_subparsers(dest="phase0_command", required=True)
+    knowledge_build_subparsers = knowledge_build_parser.add_subparsers(
+        dest="knowledge_build_command",
+        required=True,
+    )
 
-    phase0_subparsers.add_parser("scan", help="Scan raw Phase 0 input files.")
+    knowledge_build_subparsers.add_parser("scan", help="Scan raw input files.")
 
-    phase0_build_parser = phase0_subparsers.add_parser(
+    knowledge_build_run_parser = knowledge_build_subparsers.add_parser(
         "build",
-        help="Convert raw Phase 0 input files into notes/ Markdown drafts.",
+        help="Convert raw input files into notes/ Markdown drafts.",
     )
-    phase0_build_parser.add_argument(
+    knowledge_build_run_parser.add_argument(
         "--source",
-        choices=["all", "class_notes", "interview_summaries"],
+        choices=["all", "class_notes", "project_experiences", "interview_summaries"],
         default="all",
         help="Which raw input source to process.",
     )
-    phase0_build_parser.add_argument(
+    knowledge_build_run_parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Show files that would be written without writing them.",
     )
-    phase0_build_parser.add_argument(
+    knowledge_build_run_parser.add_argument(
         "--overwrite",
         action="store_true",
         help="Overwrite existing notes if generated file names already exist.",
@@ -211,11 +216,11 @@ def main() -> int:
     try:
         if args.command == "ingest":
             return run_ingest()
-        if args.command == "phase0":
-            if args.phase0_command == "scan":
-                return run_phase0_scan()
-            if args.phase0_command == "build":
-                return run_phase0_build(args.source, args.dry_run, args.overwrite)
+        if args.command in {"knowledge_build", "knowledge-build"}:
+            if args.knowledge_build_command == "scan":
+                return run_knowledge_build_scan()
+            if args.knowledge_build_command == "build":
+                return run_knowledge_build(args.source, args.dry_run, args.overwrite)
         if args.command == "ask":
             return run_ask(args.question, args.mode)
     except Exception as exc:

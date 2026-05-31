@@ -26,7 +26,7 @@ def build_embeddings(settings: Settings) -> Embeddings:
 
 
 def build_chat_model(settings: Settings) -> BaseChatModel:
-    """Create the chat model used for Phase 0 extraction and RAG answers."""
+    """Create the chat model used for knowledge extraction and RAG answers."""
 
     if settings.llm_provider == "ollama":
         return ChatOllama(

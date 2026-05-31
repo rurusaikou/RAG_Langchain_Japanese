@@ -1,2 +1,1 @@
-"""Personalized Japanese teacher RAG package."""
-
+"""Japanese career interview RAG coach package."""

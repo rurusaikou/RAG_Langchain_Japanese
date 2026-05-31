@@ -15,19 +15,41 @@ from rag_japanese_teacher.core.models import build_chat_model
 
 SUPPORTED_INPUT_SUFFIXES = {".md", ".markdown", ".txt"}
 
-# Phase 0 has exactly two raw input sources for now. The keys are directory
+# Knowledge build has three raw input sources for now. The keys are directory
 # names under `raw_inputs/`; the values are labels shown in CLI output.
 INPUT_GROUPS = {
     "class_notes": "上课日语笔记",
+    "project_experiences": "项目经历",
     "interview_summaries": "面试问题总结",
 }
-VALID_CATEGORIES = {"vocabulary", "grammar", "conversation", "interview", "themes"}
+VALID_CATEGORIES = {
+    "vocabulary",
+    "grammar",
+    "conversation",
+    "interview",
+    "interview_problem",
+    "themes",
+    "answer_templates",
+}
+
+# Keep the extraction taxonomy close to the product positioning. The knowledge
+# base is not a generic Japanese notebook; it is a Japanese IT career-change
+# interview coach that combines interview facts with Japanese expression notes.
+CATEGORY_GUIDE = """
+- vocabulary: 单词、熟语、商务表达、面试关键词。
+- grammar: 语法点、句型、容易出错的表达。
+- conversation: 自然口语、职场会话、老师纠正过的自然说法。
+- interview: 转职理由、志望动机、自我介绍、项目经验、技术问题、强弱项等面试素材。
+- interview_problem: 发生过的问题、课题、失败、原因、改善、结果、学到的东西。
+- themes: 话题型知识，例如教育、AI、働き方、チーム開発等。
+- answer_templates: 可复用回答框架，例如 STAR、転職理由、失敗経験、志望動機模板。
+""".strip()
 
 # Long documents should not be sent to a local model in one piece. Chunking
 # reduces omission: the model sees a smaller section and can extract more
 # complete notes from it.
-MAX_CHUNK_CHARS = 6000
-CHUNK_OVERLAP_CHARS = 400
+MAX_CHUNK_CHARS = 2000
+CHUNK_OVERLAP_CHARS = 200
 
 
 @dataclass(frozen=True)
@@ -109,7 +131,7 @@ def summarize_raw_inputs(files: list[RawInputFile]) -> dict[str, int]:
     return summary
 
 
-def build_phase0_drafts(
+def build_knowledge_drafts(
     settings: Settings,
     source: str = "all",
     dry_run: bool = False,
@@ -118,7 +140,7 @@ def build_phase0_drafts(
 ) -> list[DraftResult]:
     """Convert raw input files into draft Markdown notes.
 
-    This is the main Phase 0 pipeline. It scans raw files, chunks long content,
+    This is the main knowledge-build pipeline. It scans raw files, chunks long content,
     asks the LLM to extract structured notes, and writes those notes under
     `notes/`.
     """
@@ -142,7 +164,7 @@ def build_phase0_drafts(
         for chunk in chunks:
             # Each chunk becomes a separate LLM call. This is slower than one
             # big call, but it avoids the "long document only summarized a few
-            # highlights" problem we observed in Phase 0.
+            # highlights" problem we observed in early knowledge-building tests.
             _emit_progress(
                 progress,
                 f"[{file_index}/{len(files)}] Processing {raw_file.relative_path} "
@@ -179,7 +201,6 @@ def build_phase0_drafts(
                 _emit_progress(progress, f"Wrote {output_path}")
 
     return results
-
 
 def split_raw_input_file(raw_file: RawInputFile) -> list[RawInputChunk]:
     """Split a long raw file into chunks small enough for local LLM extraction."""
@@ -262,12 +283,14 @@ def _extract_notes(settings: Settings, chunk: RawInputChunk) -> list[dict[str, s
     """Ask the LLM to convert one chunk into structured note drafts."""
 
     raw_file = chunk.source_file
+    extraction_focus = _get_extraction_focus(raw_file.group)
     prompt = ChatPromptTemplate.from_messages(
         [
             (
                 "system",
-                "你是一个严谨的日语学习资料整理助手。"
-                "你的任务是把原始资料整理成适合 RAG 检索的 Markdown 知识库。"
+                "你是一个严谨的“日语转职面试知识库”整理助手。"
+                "你的任务不是普通总结，而是把原始资料拆成适合 RAG 检索、"
+                "并能直接帮助日本 IT 转职面试练习的 Markdown 知识库。"
                 "必须只输出 JSON，不要输出解释文字。",
             ),
             (
@@ -276,15 +299,13 @@ def _extract_notes(settings: Settings, chunk: RawInputChunk) -> list[dict[str, s
 输入来源：{group_label}
 原始文件：{source_path}
 当前分块：{chunk_index}/{chunk_total}
+本来源的抽取重点：
+{extraction_focus}
 
 请把下面资料拆分成多个独立知识点，每个知识点生成一个 Markdown 文件。
 
 分类只能使用：
-- vocabulary
-- grammar
-- conversation
-- interview
-- themes
+{category_guide}
 
 输出 JSON 格式：
 {{
@@ -298,17 +319,22 @@ def _extract_notes(settings: Settings, chunk: RawInputChunk) -> list[dict[str, s
 }}
 
 整理规则：
-- 一个知识点、一个会话场景或一个面试问题，生成一个文件。
+- 一个知识点、一个会话场景、一个面试问题、一个问题改善案例，生成一个文件。
 - 尽量完整抽取当前分块中的有效内容，不要只总结最重要的 2-3 个点。
 - 如果当前分块包含多个问题、多个表达或多个语法点，请分别生成多个文件。
-- 如果资料中出现「问题、課題、不具合、ミス、原因、改善、対応、効率化、自動化」等内容，必须优先整理成单独的 interview 文档。
-- 问题解决型 interview 文档必须包含这些小节：## 想定質問、## 事象、## 原因、## 改善・対応、## 結果、## 学び、## 面试回答例、## 追加質問、## 关键词。
+- 如果资料中出现「问题、課題、不具合、ミス、原因、改善、対応、効率化、自動化、失敗、反省」等内容，必须优先整理成单独的 interview_problem 文档。
+- 问题解决型 interview_problem 文档必须包含这些小节：## 想定質問、## 事象、## 原因、## 改善・対応、## 結果、## 学び、## 面试回答例、## 追加質問、## 关键词。
+- 项目经历类 interview 文档必须尽量包含：## 项目背景、## 担当职责、## 技术栈、## 开发内容、## 成果、## 面试可讲重点、## 日语回答例、## 可能追问、## 来源。
+- 面试素材类 interview 文档建议包含：## 想定質問、## 中文原意、## 日语自然表达、## 更商务的表达、## 简短版、## 标准版、## 深挖版、## 相关表达、## 可能追问、## 来源。
+- 日语课笔记中的表达如果能用于面试，必须在 content 中加入「## 面试可用表达」或「## 面试使用场景」。
+- 如果资料中出现可复用回答结构，整理到 answer_templates，并包含：## 使用场景、## 回答结构、## 日语模板、## 中文说明、## 替换变量、## 注意点。
 - 一个问题或一个改善案例只能生成一个独立文件，不要混进转职理由、强み、自我介绍等通用文档。
 - content 必须是完整 Markdown。
 - content 必须包含「## 来源」。
 - 来源中必须写明原始文件和分块编号。
-- 上课笔记优先整理到 vocabulary / grammar / conversation / themes。
-- 面试总结优先整理到 interview，也可以提取常用表达到 vocabulary / conversation。
+- 上课笔记优先整理到 vocabulary / grammar / conversation / themes；如果能服务面试，也要写清楚面试使用方式。
+- 项目经历优先整理到 interview / interview_problem；项目中的技术词、业务词也可以整理到 vocabulary。
+- 面试总结优先整理到 interview / interview_problem / answer_templates；也可以提取常用表达到 vocabulary / conversation。
 - 不要编造原始资料中没有的信息；可以用「未记录」标注缺失内容。
 - 文件名使用日语或中文关键词，必须以 .md 结尾。
 
@@ -328,6 +354,8 @@ def _extract_notes(settings: Settings, chunk: RawInputChunk) -> list[dict[str, s
             "source_path": str(raw_file.relative_path),
             "chunk_index": chunk.index,
             "chunk_total": chunk.total,
+            "extraction_focus": extraction_focus,
+            "category_guide": CATEGORY_GUIDE,
             "raw_text": chunk.text,
         }
     )
@@ -362,6 +390,28 @@ def _extract_notes(settings: Settings, chunk: RawInputChunk) -> list[dict[str, s
         )
 
     return cleaned
+
+
+def _get_extraction_focus(group: str) -> str:
+    """Describe how each raw input group should be converted into notes."""
+
+    if group == "class_notes":
+        return (
+            "这是日语老师上课笔记。重点抽取单词、语法、自然表达、老师纠错、"
+            "话题展开方式，并补充它们在转职面试中的可用场景。"
+        )
+    if group == "project_experiences":
+        return (
+            "这是用户真实项目经历。重点抽取项目背景、业务目标、担当职责、"
+            "技术栈、开发内容、成果、困难、问题、原因、改善行动、量化结果、"
+            "学到的东西，以及可以直接用于日本 IT 转职面试的回答素材。"
+        )
+    if group == "interview_summaries":
+        return (
+            "这是用户转职面试准备资料。重点抽取转职理由、志望动机、项目经历、"
+            "技术问题、问题改善案例、失败经验、可复用回答模板。"
+        )
+    return "按日语转职面试知识库的目标抽取可复习、可检索、可回答的内容。"
 
 
 def _emit_progress(progress: Callable[[str], None] | None, message: str) -> None:

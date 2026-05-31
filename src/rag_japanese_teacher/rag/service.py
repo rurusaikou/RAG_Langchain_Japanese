@@ -1,4 +1,5 @@
 from langchain_chroma import Chroma
+from langchain_core.documents import Document
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from typing import Callable
@@ -14,6 +15,30 @@ from rag_japanese_teacher.rag.prompts import BASE_SYSTEM_PROMPT, get_mode_prompt
 
 
 COLLECTION_NAME = "japanese_teacher_notes"
+
+RETRIEVAL_CATEGORY_PRIORITY = {
+    "interview": [
+        "interview",
+        "interview_problem",
+        "answer_templates",
+        "conversation",
+        "grammar",
+        "vocabulary",
+    ],
+    "conversation": ["conversation", "interview", "vocabulary", "grammar", "themes"],
+    "grammar": ["grammar", "conversation", "interview", "vocabulary"],
+    "vocabulary": ["vocabulary", "conversation", "interview", "themes"],
+    "theme": ["themes", "interview", "conversation", "vocabulary", "grammar"],
+    "general": [
+        "interview",
+        "interview_problem",
+        "answer_templates",
+        "conversation",
+        "grammar",
+        "vocabulary",
+        "themes",
+    ],
+}
 
 
 def build_vectorstore(settings: Settings) -> Chroma:
@@ -69,8 +94,7 @@ def answer_question(settings: Settings, question: str, mode: str = "general") ->
     """
 
     vectorstore = build_vectorstore(settings)
-    retriever = vectorstore.as_retriever(search_kwargs={"k": 4})
-    documents = retriever.invoke(question)
+    documents = _retrieve_documents(vectorstore, question, mode)
 
     context = format_documents(documents)
     sources = format_sources(documents)
@@ -99,3 +123,44 @@ def answer_question(settings: Settings, question: str, mode: str = "general") ->
     )
 
     return answer, sources
+
+
+def _retrieve_documents(vectorstore: Chroma, question: str, mode: str) -> list[Document]:
+    """Retrieve notes, then prefer categories that match the current task.
+
+    Chroma returns semantically similar notes, but this product also needs a
+    teaching strategy: interview questions should see interview material first,
+    then language-expression notes that can polish the answer.
+    """
+
+    raw_documents = vectorstore.similarity_search(question, k=12)
+    priority = RETRIEVAL_CATEGORY_PRIORITY.get(
+        mode, RETRIEVAL_CATEGORY_PRIORITY["general"]
+    )
+    priority_index = {category: index for index, category in enumerate(priority)}
+
+    def sort_key(item):
+        original_index, document = item
+        category = document.metadata.get("category", "general")
+        return (priority_index.get(category, len(priority)), original_index)
+
+    ranked_documents = [
+        document
+        for _, document in sorted(enumerate(raw_documents), key=sort_key)
+    ]
+
+    return _dedupe_documents(ranked_documents)[:6]
+
+
+def _dedupe_documents(documents: list[Document]) -> list[Document]:
+    """Remove repeated notes while preserving order."""
+
+    unique_documents = []
+    seen_sources = set()
+    for document in documents:
+        source = document.metadata.get("source")
+        if source in seen_sources:
+            continue
+        seen_sources.add(source)
+        unique_documents.append(document)
+    return unique_documents
